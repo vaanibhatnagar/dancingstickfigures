@@ -1,111 +1,124 @@
 import numpy as np
 import matplotlib.pyplot as plt
-import matplotlib.animation as animation
+from matplotlib.animation import FuncAnimation
+import sounddevice as sd
+import threading
 import time
 
-# Parameters
-population_size = 100
-sequence_length = 30  # Number of frames per sequence
-generations = 100
-mutation_rate = 0.1
+# --- Stick Figure Geometry ---
+shoulder = np.array([0, 1.9])
+upper_arm_length = 0.4
+forearm_length = 0.4
+sequence_length = 50
+
 beat_interval = 15
-# metronome_beats = np.array([i % 15 == 0 for i in range(sequence_length)])
 frame_duration_ms = 100  # ms per frame
 beat_period_sec = (beat_interval * frame_duration_ms) / 1000
 metronome_beats = [i % beat_interval == 0 for i in range(sequence_length)]
 last_tick_time = [0]  # mutable reference
 
-# Define initial shoulder position and upper arm length
-shoulder = np.array([0, 1.9])
-upper_arm_len = 0.5
-forearm_len = 0.5
+# --- Arc Path Generator ---
+def generate_arc_path(num_points=50, radius=0.4, center=(0, 1.9)):
+    theta = np.linspace(-np.pi / 4, np.pi / 4, num_points)
+    x = center[0] + radius * np.cos(theta)
+    y = center[1] - radius * np.sin(theta)
+    return np.vstack((x, y)).T
 
-# Generate initial population (random angle sequences)
-def generate_population():
-    return [np.random.uniform(-np.pi/2, np.pi/2, size=(sequence_length, 2)) for _ in range(population_size)]
-
-# Simulate stick figure arm based on angles
+# --- Decode Angle Sequence to Hand Path ---
 def get_hand_positions(sequence):
     positions = []
-    for shoulder_angle, elbow_angle in sequence:
-        elbow = shoulder + upper_arm_len * np.array([np.cos(shoulder_angle), np.sin(shoulder_angle)])
-        hand = elbow + forearm_len * np.array([np.cos(shoulder_angle + elbow_angle), np.sin(shoulder_angle + elbow_angle)])
-        positions.append((elbow, hand))
-    return positions
+    for theta in sequence:
+        elbow = shoulder + upper_arm_length * np.array([np.cos(theta), np.sin(theta)])
+        hand = elbow + forearm_length * np.array([np.cos(theta), np.sin(theta)])
+        positions.append(hand)
+    return np.array(positions)
 
-def target_hand_positions():
-    total_frames = sequence_length
-    period = beat_interval * 2  # One full wave per two beats
-    return 1 + 0.5 * np.sin(2 * np.pi * np.arange(total_frames) / period)
+# --- Fitness Function ---
+def smoothness_penalty(sequence):
+    diffs = np.diff(sequence)
+    return np.mean(np.abs(diffs))
 
-# Fitness function: reward hand height peaking on metronome beat
-def fitness(sequence):
-    positions = get_hand_positions(sequence)
-    target_heights = target_hand_positions()
-    score = 0.0
-    for i, (elbow, hand) in enumerate(positions):
-        hand_height = hand[1]
-        diff = abs(hand_height - target_heights[i])
-        score -= diff  # minimize distance from the desired wave
-    return score
+def fitness(sequence, bpm=120):
+    actual_positions = get_hand_positions(sequence)
+    arc_path = generate_arc_path(num_points=len(sequence), radius=0.5, center=(0, 1.9))
 
-# Selection
-def select(population, scores):
-    sorted_pop = [x for _, x in sorted(zip(scores, population), reverse=True)]
-    return sorted_pop[:population_size // 2]
+    # Define beat spacing and wave direction
+    beat_period = 60 / bpm
+    frames_per_half_wave = len(sequence) // 2  # One down, one up
+    expected_positions = []
 
-# Crossover
-def crossover(parent1, parent2):
+    for i in range(len(sequence)):
+        # Determine whether we're in the first or second half of the wave
+        if i < frames_per_half_wave:
+            # Downward wave (top to bottom)
+            interp_index = int((i / frames_per_half_wave) * (len(arc_path) - 1))
+        else:
+            # Upward wave (bottom to top)
+            interp_index = int(((len(sequence) - i - 1) / frames_per_half_wave) * (len(arc_path) - 1))
+
+        expected_positions.append(arc_path[interp_index])
+
+    expected_positions = np.array(expected_positions)
+    trajectory_error = np.mean(np.linalg.norm(actual_positions - expected_positions, axis=1))
+    smooth_penalty = smoothness_penalty(sequence)
+
+    return - (trajectory_error + 0.1 * smooth_penalty)
+
+# --- Genetic Algorithm Functions ---
+def initialize_population(size):
+    return [np.random.uniform(-np.pi/2, np.pi/2, size=sequence_length) for _ in range(size)]
+
+def select_parents(population, scores):
+    sorted_pop = [x for _, x in sorted(zip(scores, population), key=lambda pair: pair[0], reverse=True)]
+    return sorted_pop[:2]  # top 2
+
+def crossover(p1, p2):
     point = np.random.randint(1, sequence_length - 1)
-    child1 = np.vstack((parent1[:point], parent2[point:]))
-    child2 = np.vstack((parent2[:point], parent1[point:]))
-    return child1, child2
+    return np.concatenate((p1[:point], p2[point:]))
 
-# Mutation
-def mutate(sequence):
-    for i in range(sequence_length):
-        if np.random.rand() < mutation_rate:
-            sequence[i] += np.random.normal(0, 0.2, size=2)
+def mutate(sequence, rate=0.1):
+    for i in range(len(sequence)):
+        if np.random.rand() < rate:
+            sequence[i] += np.random.normal(0, 0.1)
     return sequence
 
-# Genetic Algorithm
-def evolve():
-    population = generate_population()
+def evolve(generations=50, pop_size=20):
+    population = initialize_population(pop_size)
     for gen in range(generations):
         scores = [fitness(ind) for ind in population]
-        selected = select(population, scores)
-        children = []
-        while len(children) < population_size:
-            parents = np.random.choice(len(selected), 2, replace=False)
-            child1, child2 = crossover(selected[parents[0]], selected[parents[1]])
-            children.append(mutate(child1))
-            children.append(mutate(child2))
-        population = children
-        # print(f"Generation {gen+1} - Best Fitness: {max(scores):.2f}")
-    return population[np.argmax(scores)]
+        parents = select_parents(population, scores)
+        new_population = [parents[0], parents[1]]
+        while len(new_population) < pop_size:
+            child = crossover(*parents)
+            child = mutate(child)
+            new_population.append(child)
+        population = new_population
+    best_sequence = max(population, key=fitness)
+    print(best_sequence)
+    return best_sequence
 
-# Animation
-import sounddevice as sd
-
-# Generate a click sound using a sine wave
-def generate_tick_sound(frequency=880, duration=0.1, sample_rate=44100):
+def play_tick(frequency=880, duration=0.1, sample_rate=44100, bpm = 120):
     t = np.linspace(0, duration, int(sample_rate * duration), False)
-    wave = 0.5 * np.sin(2 * np.pi * frequency * t)  # volume = 0.5
-    return wave.astype(np.float32), sample_rate
+    tick = 0.5 * np.sin(2 * np.pi * frequency * t)
+    
+    interval = 60 / bpm  # Time between each tick, based on BPM
 
-tick_wave, sample_rate = generate_tick_sound()
+    try:
+        sd.play(tick, samplerate=sample_rate)
+        sd.wait()
+    except Exception as e:
+        print(f"[Metronome Playback Error] {e}")
+    
+    time.sleep(interval - duration)
 
-def play_tick():
-    sd.play(tick_wave, samplerate=sample_rate, blocking=False)
-
-def animate(sequence):
-    positions = get_hand_positions(sequence)
-
+# --- Animation Setup ---
+def animate_sequence(sequence):
     fig, ax = plt.subplots()
-    ax.set_xlim(-2, 2)
-    ax.set_ylim(0.5, 3)
-    ax.set_aspect('equal')
-    arm_line, = ax.plot([], [], 'o-', lw=3)
+    arc_path = generate_arc_path(len(sequence), radius=0.8, center=(0, 1.9))
+    ln_hand, = plt.plot([], [], 'ro')
+    ln_arm, = plt.plot([], [], 'k-', lw=2)
+    ln_forearm, = plt.plot([], [], 'k-', lw=2)
+    ln_arc, = plt.plot(arc_path[:,0], arc_path[:,1], 'b--', label='Target Arc')
     metronome_dot, = ax.plot([], [], 'ro', markersize=10)
 
     head = plt.Circle((0, 2.3), 0.2, fill=False, lw=2)
@@ -120,22 +133,27 @@ def animate(sequence):
 
     # Static left arm
     ax.plot([0, -0.7], [1.9, 2.1], 'k-', lw=3)
-
-    def init():
-        arm_line.set_data([], [])
-        metronome_dot.set_data([], [])
-        return arm_line, metronome_dot
-
     
-    start_time = [time.time()]  # store when animation started
+    def init():
+        ax.set_xlim(-2, 2)
+        ax.set_ylim(0.5, 3)
+        ax.set_aspect('equal')
+        # ax.invert_yaxis()
+        return ln_hand, ln_arm, ln_forearm
 
+    start_time = [time.time()]
+    
     def update(frame):
         current_time = time.time()
         elapsed = current_time - start_time[0]
 
-        elbow, hand = positions[frame]
-        arm_line.set_data([shoulder[0], elbow[0], hand[0]],
-                        [shoulder[1], elbow[1], hand[1]])
+        theta = sequence[frame]
+        elbow = shoulder + upper_arm_length * np.array([np.cos(theta), np.sin(theta)])
+        hand = elbow + forearm_length * np.array([np.cos(theta), np.sin(theta)])
+
+        ln_arm.set_data([shoulder[0], elbow[0]], [shoulder[1], elbow[1]])
+        ln_forearm.set_data([elbow[0], hand[0]], [elbow[1], hand[1]])
+        ln_hand.set_data([hand[0]], [hand[1]])
 
         # Play tick if enough time has passed
         if elapsed - last_tick_time[0] >= beat_period_sec:
@@ -144,19 +162,42 @@ def animate(sequence):
             last_tick_time[0] = elapsed
         else:
             metronome_dot.set_data([], [])
-        
-        return arm_line, metronome_dot
 
+        return ln_hand, ln_arm, ln_forearm, metronome_dot
 
-    ani = animation.FuncAnimation(
-        fig, update, frames=len(positions),
-        init_func=init, blit=True, interval=150, repeat=True
-    )
-    plt.title("Stick Figure Waving to a Metronome")
+    ani = FuncAnimation(fig, update, frames=len(sequence), init_func=init, blit=True, interval=100, repeat = True)
+    plt.title("Stick Figure Waving to Arc")
+    plt.legend()
     plt.show()
     return ani
 
-# Run everything
-best_sequence = evolve()
-print(best_sequence)
-animate(best_sequence)
+# --- Metronome Playback Thread ---
+def metronome_thread(bpm):
+    interval = 60 / bpm
+    duration = 0.1
+    frequency = 880  # Hz
+    sample_rate = 44100
+
+    t = np.linspace(0, duration, int(sample_rate * duration), False)
+    tick = 0.5 * np.sin(2 * np.pi * frequency * t)
+
+    while True:
+        try:
+            sd.play(tick, samplerate=sample_rate)
+            sd.wait()
+        except Exception as e:
+            print(f"[Metronome Playback Error] {e}")
+            break  # Optional: exit the loop on error
+        time.sleep(interval - duration)
+
+# --- Run Everything ---
+if __name__ == "__main__":
+    # Start metronome in background
+    bpm = 120
+    threading.Thread(target=metronome_thread, args=(bpm,), daemon=True).start()
+
+    # Run genetic algorithm to get best wave
+    best_seq = evolve(generations=60, pop_size=30)
+    print(best_seq)
+    # Show animation
+    ani = animate_sequence(best_seq)

@@ -8,20 +8,34 @@ import wave
 # ----------------------------
 bpm = 60
 mean_period = 60.0 / bpm
-fast = mean_period
-slow = mean_period * 2
-pattern = [fast]*4 + [slow]*3 + [fast]*4 + [slow]*2 + [fast]*4 + [slow]*2
+fast = mean_period * 0.5
+slow = mean_period * 1.5
+# pattern = [fast]*4 + [slow]*3 + [fast]*4 + [slow]*2 + [fast]*4 + [slow]*2
+pattern = (
+    [slow]*8             # → Intro: 8 slow beats (gentle wave build-up)
+  + [fast]*4 + [slow]*4  # → Verse: 4 fast (twerk), 4 slow (wave)
+  + [slow]*2 + [fast]*6  # → Pre-chorus: 2 slow, 6 fast crescendo
+  + [slow]*1 + [fast]*8 + [slow]*2  # → Chorus: 1 slow, 8 fast, 2 slow
+  + [slow]*4             # → Bridge break: 4 slow
+  + [fast]*12            # → Drop: 12 fast (non-stop twerk)
+)
 beat_times = np.cumsum(pattern)
 total_time = beat_times[-1] + mean_period
-beat_types = np.array([interval == fast for interval in pattern])
+deltas = pattern  # each is the actual interval length
+# Anything shorter than (mean_period * 0.75) we’ll treat as “fast”
+thresh = mean_period * 0.75
+beat_types = np.array([dt < thresh for dt in deltas])
+# beat_types = np.array([interval == fast for interval in pattern])
+print(beat_times)
+print(beat_types)
 M = len(beat_times)
 fps = 30
 
 # ----------------------------
 # 2) GA Parameters
 # ----------------------------
-population_size = 50
-generations = 120
+population_size = 100
+generations = 150
 mutation_rate = 0.1
 
 # ----------------------------
@@ -124,6 +138,8 @@ e1, = ax1.plot([], [], 'o', ms=4); e2, = ax1.plot([], [], 'o', ms=4)
 mouth, = ax1.plot([], [], lw=1)
 k1dot, = ax1.plot([], [], 'o', ms=6); k2dot, = ax1.plot([], [], 'o', ms=6)
 beat_dot, = ax1.plot([], [], 'o', color='red', ms=8)
+action_text = ax1.text(0.75, 2.8, '', fontsize=16, ha='center')
+type_text   = ax1.text(0.75, 2.6, '', fontsize=14, ha='center', color='blue')
 
 # Right panel setup
 ax2.set_xlim(0, generations - 1)
@@ -131,12 +147,16 @@ ymin, ymax = min(fitness_history), max(fitness_history)
 ax2.set_ylim(ymin - 0.1*(ymax-ymin), ymax + 0.1*(ymax-ymin))
 ax2.set_xlabel('Generation'); ax2.set_ylabel('Max Fitness'); ax2.set_title('Learning Curve')
 curve, = ax2.plot([], [], lw=2)
+action_text = ax1.text(0.75, 2.8, '', fontsize=16, ha='center')
+type_text   = ax1.text(0.75, 2.6, '', fontsize=14, ha='center', color='blue')
 
 def init_train():
     for ln in [th1, sh1, th2, sh2, back_line, larm, rarm, e1, e2, mouth, k1dot, k2dot, beat_dot, curve]:
         ln.set_data([], [])
     head.set_center((0, 0))
-    return [th1, sh1, th2, sh2, back_line, larm, rarm, head, e1, e2, mouth, k1dot, k2dot, beat_dot, curve]
+    action_text.set_text('')
+    type_text.set_text('') 
+    return [th1, sh1, th2, sh2, back_line, larm, rarm, head, e1, e2, mouth, k1dot, k2dot, beat_dot, action_text, type_text, curve]
 
 def animate_train(frame):
     t = frame / fps
@@ -187,11 +207,17 @@ def animate_train(frame):
     else:
         beat_dot.set_data([], [])
 
+    # Determine action
+    action = 'Twerk' if beat_types[idx] else 'Wave'
+    action_text.set_text(action)
+    type_text.set_text('Fast beat' if beat_types[idx] else 'Slow beat')  # ← update new label
+
+
     # Growth curve
     xs = np.arange(gen+1); ys = fitness_history[:gen+1]
     curve.set_data(xs, ys)
 
-    return [th1, sh1, th2, sh2, back_line, larm, rarm, head, e1, e2, mouth, k1dot, k2dot, beat_dot, curve]
+    return [th1, sh1, th2, sh2, back_line, larm, rarm, head, e1, e2, mouth, k1dot, k2dot, beat_dot, action_text, type_text, curve]
 
 anim1 = animation.FuncAnimation(fig1, animate_train, init_func=init_train,
                                 frames=total_frames, interval=1000/fps, blit=True)
@@ -253,6 +279,10 @@ def animate_final(frame):
         x2 = sx + np.cos(angle); y2 = sy + np.sin(angle)
         f_larm.set_data([sx, x2], [sy, y2]); f_rarm.set_data([sx, k2[0]], [sy, k2[1]])
         f_k1.set_data([],[]); f_k2.set_data([],[])
+    
+    # Determine action
+    action = 'Twerk' if beat_types[idx] else 'Wave'
+    action_text.set_text(action)
 
     # face
     f_e1.set_data([hpt[0] - eye_dx], [hpt[1] + eye_dy])
@@ -265,7 +295,7 @@ def animate_final(frame):
     else:
         f_beat.set_data([], [])
 
-    return [f_th1,f_sh1,f_th2,f_sh2,f_back,f_larm,f_rarm,f_head,f_e1,f_e2,f_mouth,f_k1,f_k2,f_beat]
+    return [f_th1,f_sh1,f_th2,f_sh2,f_back,f_larm,f_rarm,f_head,f_e1,f_e2,f_mouth,f_k1,f_k2,f_beat, action_text]
 
 anim2 = animation.FuncAnimation(fig2, animate_final, init_func=init_final,
                                 frames=total_frames, interval=1000/fps, blit=True)

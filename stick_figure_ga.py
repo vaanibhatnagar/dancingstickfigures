@@ -302,3 +302,59 @@ anim2 = animation.FuncAnimation(fig2, animate_final, init_func=init_final,
 
 plt.tight_layout()
 plt.show()
+
+
+# Time vector
+t = np.linspace(0, total_time, 2000)
+
+# Piecewise sine function
+# def piecewise_sine(t, beat_times, phi):
+#     idx = np.clip(np.searchsorted(beat_times, t) - 1, 0, len(beat_times)-2)
+#     dt = beat_times[idx+1] - beat_times[idx]
+#     x = t - beat_times[idx]
+#     return np.sin(2 * np.pi * (bpm/60.0) * x / dt + phi[idx])
+
+# y_initial = piecewise_sine(t, beat_times, best_phis[0])
+# y_final   = piecewise_sine(t, beat_times, best_phis[-1])
+
+# --------------------------------------
+# OPTION A: single‐global‐phase sine
+
+# choose a single phase (e.g. the mean of your learned per-beat phases)
+phi_init_global  = np.mean(best_phis[0])
+phi_final_global = np.mean(best_phis[-1])
+
+# build two constant‐amplitude sines
+y_initial = np.sin(2*np.pi*(bpm/60.0)*t + phi_init_global)
+y_final   = np.sin(2*np.pi*(bpm/60.0)*t + phi_final_global)
+
+# Plotting
+fig, axes = plt.subplots(3, 1, figsize=(8, 10))
+
+# 1) Learning curve placeholder
+axes[0].plot(fitness_history, marker='o')
+axes[0].set_title('Fitness Growth Over Generations')
+axes[0].set_xlabel('Generation')
+axes[0].set_ylabel('Max Fitness')
+
+# 2) Initial sine waveform
+axes[1].plot(t, y_initial, label='Initial')
+# axes[1].scatter(beat_times, np.sin(2*np.pi*(bpm/60.0)*(beat_times-beat_times) + best_phis[0]),
+#                 color='red', zorder=5)
+axes[1].scatter(beat_times,
+                np.sin(2*np.pi*(bpm/60.0)*beat_times + phi_init_global),
+                color='red')
+axes[1].set_title('Initial Piecewise Sine Alignment')
+axes[1].set_xlabel('Time (s)')
+axes[1].set_ylabel('Amplitude')
+
+# 3) Final sine waveform
+axes[2].plot(t, y_final, label='Final')
+axes[2].scatter(beat_times, np.sin(2*np.pi*(bpm/60.0)*(beat_times-beat_times) + best_phis[-1]),
+                color='green', zorder=5)
+axes[2].set_title('Final Piecewise Sine Alignment')
+axes[2].set_xlabel('Time (s)')
+axes[2].set_ylabel('Amplitude')
+
+plt.tight_layout()
+plt.show()

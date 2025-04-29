@@ -1,50 +1,81 @@
 # Imports
 import matplotlib.pyplot as plt
-from genetic_algo import create_beat_pattern, run_genetic_algorithm
-from sound_gen import generate_metronome, play_metronome
-from animation import create_training_animation, create_final_animation
+import numpy as np
+from genetic_algo import create_beat_pattern, GeneticAlgorithm
+from sound_gen import generate_metronome, play_audio
+from animation import StickFigureAnimator
 
 # ------ Step 1: Create Beat Pattern and Run Genetic Algorithm ------
 
 # Create beat patterns
-bpm, pattern, beat_times, beat_types, total_time = create_beat_pattern()
+beat_times, beat_types, total_time, M, mean_period, pattern = create_beat_pattern(
+    bpm=60
+)
 
-# Initialize genetic algorithm parameters
-population_size = 100
-generations = 150
-mutation_rate = 0.1
+# Create genetic algorithm instance
+ga = GeneticAlgorithm(beat_times, beat_types, 60, M)
+
+
+# Need to fix the `fitness` method - Let's monkey patch it before running
+def fixed_fitness(self, genome):
+    """
+    Compute the fitness of a genome.
+    """
+    phi = genome[: self.M]
+    moves = genome[self.M :].astype(bool)
+    score = 0.0
+    for i, t in enumerate(self.beat_times):
+        raw = np.sin(2 * np.pi * (self.bpm / 60.0) * t + phi[i])
+        # reward or penalize for correct move
+        if moves[i] == self.beat_types[i]:
+            score += raw
+        else:
+            score -= self.penalty_move
+        # penalize if not sufficiently on-beat (raw < threshold)
+        if raw < self.alignment_thr:
+            score -= self.penalty_miss
+    return score
+
+
+# Apply the monkey patch
+GeneticAlgorithm.fitness = fixed_fitness
 
 # Execute the genetic algorithm
-best_phis, fitness_history = run_genetic_algorithm(
-    beat_times, bpm, population_size, generations, mutation_rate
-)
+final_phi, final_moves, best_genomes, fitness_history = ga.run()
+
+# Print some info about the optimization
+ga.print_info()
 
 # ------ Step 2: Generate Audio ------
 
 # Generate metronome
-metronome = generate_metronome(beat_times, total_time, "metronome.wav")
+metronome, sample_rate = generate_metronome(beat_times, total_time, "metronome.wav")
 ## Uncomment to hear the metronome
-# play_metronome(metronome)
+# play_audio(metronome, sample_rate)
 
 # ------ Step 3: Create Animations ------
+
+# Create animator object
+animator = StickFigureAnimator(
+    beat_times, beat_types, pattern, 60, total_time, metronome, sample_rate
+)
+
 # Create training animation
-fig_train, anim_train = create_training_animation(
-    pattern,
-    beat_times,
-    beat_types,
-    best_phis,
-    fitness_history,
-    total_time,
-    generations,
+fig_train, anim_train = animator.create_training_animation(
+    best_genomes, fitness_history, final_moves
 )
 plt.tight_layout()
 plt.show()
 
-
 # Create final animation with best solution
-final_phi = best_phis[-1]  # Use the best solution from the last generation
-fig_final, anim_final = create_final_animation(
-    pattern, beat_times, beat_types, final_phi, total_time
+fig_final, anim_final = animator.create_final_animation(
+    final_moves,
+    final_phi,
+    pattern,
+    beat_times,
+    beat_types,
+    final_phi,  # best_phi param is the same as final_phi
+    total_time,
 )
 
 plt.tight_layout()

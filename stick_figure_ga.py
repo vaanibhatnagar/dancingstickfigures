@@ -2,6 +2,8 @@ import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.animation as animation
 import wave
+import sounddevice as sd
+import time
 
 # ----------------------------
 # 1) Parameters & Beat Pattern
@@ -83,11 +85,14 @@ with wave.open(wav_file, 'w') as wf:
     wf.setframerate(sample_rate)
     wf.writeframes((metronome * 32767).astype(np.int16).tobytes())
 
-try:
-    import sounddevice as sd
-    sd.play(metronome.astype(np.float32), samplerate=sample_rate)
-except ImportError:
-    pass  # no audio playback
+# try:
+#     sd.play(metronome.astype(np.float32), samplerate=sample_rate)
+# except ImportError:
+#     pass  # no audio playback
+
+# Global variables
+played = False
+start_time =  None
 
 # ----------------------------
 # 5) Genetic Algorithm
@@ -118,16 +123,7 @@ def two_point_crossover(p1, p2):
     child[cut1:cut2] = p2[cut1:cut2]
     return child
 
-# ----------------------------
-# Gaussian Mutation
-# ----------------------------
-# def gaussian_mutation(phi, sigma):
-#     """
-#     Apply Gaussian mutation: add N(0, sigma^2) noise to each gene,
-#     then wrap phases modulo 2π.
-#     """
-#     mutated = phi + np.random.normal(0, sigma, size=phi.shape)
-#     return np.mod(mutated, 2*np.pi)
+
 # ----------------------------
 # 4) Mutation Operators
 # ----------------------------
@@ -140,10 +136,6 @@ def bit_flip(moves, p):
     moves[flips] = ~moves[flips]
     return moves
 
-# pop = np.random.uniform(0, 2*np.pi, (population_size, M))
-# best_phis = []
-# fitness_history = []
-
 pop = np.zeros((population_size, 2*M))
 for i in range(population_size):
     # random phases
@@ -153,24 +145,6 @@ for i in range(population_size):
 
 best_genomes = []
 fitness_history = []
-
-# for gen in range(generations):
-#     scores = np.array([fitness(ind) for ind in pop])
-#     best = np.argmax(scores)
-#     best_phis.append(pop[best])
-#     fitness_history.append(scores[best])
-#     winners = pop[np.argsort(scores)[-population_size//2:]]
-#     children = []
-#     while len(children) < population_size:
-#         p1, p2 = winners[np.random.choice(len(winners), 2, replace=False)]
-#         # Crossover: average
-#         child = (p1 + p2) / 2
-#         # Mutation: Gaussian
-#         child = gaussian_mutation(child, mutation_rate)
-#         children.append(child)
-#     pop = np.array(children)
-
-# best_phis = np.array(best_phis)
 
 for gen in range(generations):
     # Evaluate
@@ -254,9 +228,11 @@ ax2.set_ylim(ymin - 0.1*(ymax-ymin), ymax + 0.1*(ymax-ymin))
 ax2.set_xlabel('Generation'); ax2.set_ylabel('Max Fitness'); ax2.set_title('Learning Curve')
 curve, = ax2.plot([], [], lw=2)
 action_text = ax1.text(0.25, 2.8, '', fontsize=16, ha='center')
-type_text   = ax1.text(0.25, 2.6, '', fontsize=14, ha='center', color='blue')
+type_text   = ax1.text(0.5, 2.6, '', fontsize=14, ha='center', color='blue')
 
 def init_train():
+    global start_time
+    start_time = time.perf_counter()
     for ln in [th1, sh1, th2, sh2, back_line, larm, rarm, e1, e2, mouth, k1dot, k2dot, beat_dot, curve]:
         ln.set_data([], [])
     head.set_center((0, 0))
@@ -265,7 +241,9 @@ def init_train():
     return [th1, sh1, th2, sh2, back_line, larm, rarm, head, e1, e2, mouth, k1dot, k2dot, beat_dot, action_text, type_text, curve]
 raws=[]
 def animate_train(frame):
-    t = frame / fps
+    global start_time
+    t = time.perf_counter() - start_time
+    # t = frame / fps
     gen = min(generations - 1, int(frame / frames_per_gen))
     phi = best_genomes[gen]
     idx = np.searchsorted(beat_times, t) - 1
@@ -349,17 +327,21 @@ f_beat,=axf.plot([],[],'o',color='red',ms=8)
 fitness_history1 = np.array(fitness_history)
 # find the index (generation) of the maximum fitness
 best_gen = int(np.argmax(fitness_history1))
-print(fitness_history1)
 best = best_genomes[best_gen]
 
 def init_final():
+    global start_time
+    start_time = time.perf_counter()
     for ln in [f_th1,f_sh1,f_th2,f_sh2,f_back,f_larm,f_rarm,f_e1,f_e2,f_mouth,f_k1,f_k2,f_beat]:
         ln.set_data([],[])
     f_head.set_center((0,0))
     return [f_th1,f_sh1,f_th2,f_sh2,f_back,f_larm,f_rarm,f_head,f_e1,f_e2,f_mouth,f_k1,f_k2,f_beat]
 
+
 def animate_final(frame):
-    t = frame / fps
+    # t = frame / fps
+    global start_time
+    t = time.perf_counter() - start_time
     idx = np.searchsorted(beat_times, t) - 1
     idx = np.clip(idx, 0, M-2)
     dt = pattern[idx]
@@ -402,6 +384,14 @@ def animate_final(frame):
         f_beat.set_data([1.3], [2.8])
     else:
         f_beat.set_data([], [])
+    
+    global played
+    if frame == 0 and not played:
+        try:
+            sd.play(metronome.astype(np.float32), samplerate=sample_rate)
+        except Exception:
+            pass
+        played = True
 
     return [f_th1,f_sh1,f_th2,f_sh2,f_back,f_larm,f_rarm,f_head,f_e1,f_e2,f_mouth,f_k1,f_k2,f_beat, action_text]
 
@@ -425,9 +415,6 @@ t = np.linspace(0, total_time, 2000)
 # y_initial = piecewise_sine(t, beat_times, best_phis[0])
 # y_final   = piecewise_sine(t, beat_times, best_phis[-1])
 
-# --------------------------------------
-# OPTION A: single‐global‐phase sine
-
 # choose a single phase (e.g. the mean of your learned per-beat phases)
 initial_phi = best_genomes[0, :M]
 final_phi   = best_genomes[-1, :M]
@@ -440,7 +427,7 @@ y_initial = np.sin(2 * np.pi * (bpm/60.0) * t + np.mean(initial_phi))
 y_final   = np.sin(2 * np.pi * (bpm/60.0) * t + np.mean(final_phi))
 
 # Plot
-fig, axes = plt.subplots(4, 1, figsize=(8, 10))
+fig, axes = plt.subplots(3, 1, figsize=(8, 10))
 
 # 1) Fitness growth (placeholder)
 axes[0].plot(fitness_history, marker='o')
@@ -472,7 +459,7 @@ axes[2].set_xlabel('Time (s)')
 axes[2].set_ylabel('Amplitude')
 axes[2].set_ylim(-1.1, 1.1)
 
-axes[3].plot(raws)
+# axes[3].plot(raws)
 
 plt.tight_layout()
 plt.show()

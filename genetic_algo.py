@@ -1,107 +1,95 @@
+"""
+Genetic algorithm module for optimizing dance movement phases.
+"""
+
 import numpy as np
-import sounddevice as sd
-import time
-from char_animation import get_hand_positions, generate_arc_path
-
-sequence_length = 50
-beat_interval = 15
-frame_duration_ms = 100  # ms per frame
-beat_period_sec = (beat_interval * frame_duration_ms) / 1000
-metronome_beats = [i % beat_interval == 0 for i in range(sequence_length)]
-last_tick_time = [0]  # mutable reference
 
 
-def smoothness_penalty(sequence):
-    diffs = np.diff(sequence)
-    return np.mean(np.abs(diffs))
+def create_beat_pattern():
+    """Create the beat pattern with timing information."""
+    bpm = 60
+    mean_period = 60.0 / bpm
+    fast = mean_period * 0.5
+    slow = mean_period * 1.5
 
-
-def fitness(sequence, bpm=120):
-    actual_positions = get_hand_positions(sequence)
-    arc_path = generate_arc_path(num_points=len(sequence), radius=0.5, center=(0, 1.9))
-
-    # Define beat spacing and wave direction
-    beat_period = 60 / bpm
-    frames_per_half_wave = len(sequence) // 2  # One down, one up
-    expected_positions = []
-
-    for i in range(len(sequence)):
-        # Determine whether we're in the first or second half of the wave
-        if i < frames_per_half_wave:
-            # Downward wave (top to bottom)
-            interp_index = int((i / frames_per_half_wave) * (len(arc_path) - 1))
-        else:
-            # Upward wave (bottom to top)
-            interp_index = int(
-                ((len(sequence) - i - 1) / frames_per_half_wave) * (len(arc_path) - 1)
-            )
-
-        expected_positions.append(arc_path[interp_index])
-
-    expected_positions = np.array(expected_positions)
-    trajectory_error = np.mean(
-        np.linalg.norm(actual_positions - expected_positions, axis=1)
+    pattern = (
+        [slow] * 8  # → Intro: 8 slow beats (gentle wave build-up)
+        + [fast] * 4
+        + [slow] * 4  # → Verse: 4 fast (twerk), 4 slow (wave)
+        + [slow] * 2
+        + [fast] * 6  # → Pre-chorus: 2 slow, 6 fast crescendo
+        + [slow] * 1
+        + [fast] * 8
+        + [slow] * 2  # → Chorus: 1 slow, 8 fast, 2 slow
+        + [slow] * 4  # → Bridge break: 4 slow
+        + [fast] * 12  # → Drop: 12 fast (non-stop twerk)
     )
-    smooth_penalty = smoothness_penalty(sequence)
 
-    return -(trajectory_error + 0.1 * smooth_penalty)
+    beat_times = np.cumsum(pattern)
+    total_time = beat_times[-1] + mean_period
+    deltas = pattern  # each is the actual interval length
 
+    # Anything shorter than (mean_period * 0.75) we'll treat as "fast"
+    thresh = mean_period * 0.75
+    beat_types = np.array([dt < thresh for dt in deltas])
 
-def initialize_population(size, sequence_length):
-    return [
-        np.random.uniform(-np.pi / 2, np.pi / 2, size=sequence_length)
-        for _ in range(size)
-    ]
-
-
-def select_parents(population, scores):
-    sorted_pop = [
-        x
-        for _, x in sorted(
-            zip(scores, population), key=lambda pair: pair[0], reverse=True
-        )
-    ]
-    return sorted_pop[:2]  # top 2
+    return bpm, pattern, beat_times, beat_types, total_time
 
 
-def crossover(p1, p2, sequence_length):
-    point = np.random.randint(1, sequence_length - 1)
-    return np.concatenate((p1[:point], p2[point:]))
+def fitness(beat_times, bpm, phi):
+    """Fitness function for the genetic algorithm."""
+    return np.sum(np.sin(2 * np.pi * (bpm / 60.0) * beat_times + phi))
 
 
-def mutate(sequence, rate=0.1):
-    for i in range(len(sequence)):
-        if np.random.rand() < rate:
-            sequence[i] += np.random.normal(0, 0.1)
-    return sequence
+def alignment_error(beat_times, bpm, phi):
+    """Calculate alignment error for given phase values."""
+    return np.mean(np.abs(1 - np.sin(2 * np.pi * (bpm / 60.0) * beat_times + phi)))
 
 
-def evolve(generations=50, pop_size=20):
-    population = initialize_population(pop_size, sequence_length)
+def run_genetic_algorithm(
+    beat_times, bpm, population_size=100, generations=150, mutation_rate=0.1
+):
+    """Run genetic algorithm to optimize phase values."""
+    M = len(beat_times)
+
+    # Initialize population
+    pop = np.random.uniform(0, 2 * np.pi, (population_size, M))
+    best_phis = []
+    fitness_history = []
+
     for gen in range(generations):
-        scores = [fitness(ind) for ind in population]
-        parents = select_parents(population, scores)
-        new_population = [parents[0], parents[1]]
-        while len(new_population) < pop_size:
-            child = crossover(*parents)
-            child = mutate(child)
-            new_population.append(child)
-        population = new_population
-    best_sequence = max(population, key=fitness)
-    print(best_sequence)
-    return best_sequence
+        scores = np.array([fitness(beat_times, bpm, ind) for ind in pop])
+        best = np.argmax(scores)
+        best_phis.append(pop[best])
+        fitness_history.append(scores[best])
 
+        # Selection
+        winners = pop[np.argsort(scores)[-population_size // 2 :]]
 
-def play_tick(frequency=880, duration=0.1, sample_rate=44100, bpm=120):
-    t = np.linspace(0, duration, int(sample_rate * duration), False)
-    tick = 0.5 * np.sin(2 * np.pi * frequency * t)
+        # Reproduction & Mutation
+        children = []
+        while len(children) < population_size:
+            p1, p2 = winners[np.random.choice(len(winners), 2, replace=False)]
+            child = (p1 + p2) / 2 + np.random.normal(0, mutation_rate, size=M)
+            children.append(np.mod(child, 2 * np.pi))
+        pop = np.array(children)
 
-    interval = 60 / bpm  # Time between each tick, based on BPM
+    best_phis = np.array(best_phis)
 
-    try:
-        sd.play(tick, samplerate=sample_rate)
-        sd.wait()
-    except Exception as e:
-        print(f"[Metronome Playback Error] {e}")
+    # Print results
+    initial = np.random.uniform(0, 2 * np.pi, M)
+    print("Beat times:", np.round(beat_times, 3))
+    print(
+        "Init fitness:",
+        fitness(beat_times, bpm, initial),
+        "Final fitness:",
+        fitness(beat_times, bpm, best_phis[-1]),
+    )
+    print(
+        "Init error:",
+        alignment_error(beat_times, bpm, initial),
+        "Final error:",
+        alignment_error(beat_times, bpm, best_phis[-1]),
+    )
 
-    time.sleep(interval - duration)
+    return best_phis, fitness_history

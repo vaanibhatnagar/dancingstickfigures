@@ -197,11 +197,24 @@ Together, these three visualizations show that our GA framework can evolve a sti
 
 # **Next Steps**
 
-Having successfully implemented a basic genetic algorithm to enable a stick figure to dance in sync with a detected beat, we aim to extend and refine our approach in several directions. Drawing inspiration from more advanced work in evolutionary character animation, there are some promising directions for improvement that this project can take.
+While our current implementation successfully applies a genetic algorithm to synchronize a stick figure's dance movements with musical beats, this project opens several avenues for deeper exploration and extension. With additional time and resources, we propose the following next steps to enhance the complexity, expressiveness, and adaptability of our dancing system. 
 
-Current movements are relatively simple. Thus, we can adopt more sophisticated encoding strategies, such as hierarchical or limb-specific representations, allowing the evolutionary process to evolve coordinated, multi-joint movements rather than treating the body as a monolithic entity. The paper on Bharatanatyam choreography with evolutionary strategies covers the limb splitting and how to encourage generations of “correct combination” of movements. \[12\] In addition, instead of evolving low-level joint angles directly, we can encode and evolve higher-level motion primitives (e.g., "step forward," "spin," "arm wave"), combining them to generate sequences of dance moves. This abstraction may improve the scalability and complexity of evolved dances. Exploring alternative or hybrid evolutionary methods such as Evolution Strategies \[11\] or Genetic Programming \[8\]\[9\] could enable richer behavioral evolution, potentially discovering novel movement styles that are less constrained by predefined motion patterns.
+Currently, the genome treats the dancer’s body as a single unit with coarse movement categories. Inspired by prior work in evolutionary choreography [12], we can evolve more realistic and expressive movements by decomposing the body into individual limbs and encoding separate motion parameters for each. This would allow, for example, the legs and arms to operate on independent phase shifts or move types, enabling compound movements like stepping while waving. Rather than encoding every motion from scratch, future versions could incorporate motion primitives—higher-level actions like “step,” “spin,” or “pop,” that are combined or sequenced through evolution. Conditioning the GA on musical genre (e.g., hip-hop, ballet, waltz) using genre-specific libraries of primitives could lead to stylistically appropriate routines that move beyond just matching tempo. This makes our approach more scalable across diverse musical styles and adaptable to user-defined preferences.
+
+Our current fitness function emphasizes beat alignment and correct move selection (twerk vs wave). To generate more natural and visually pleasing dances, we can extend the fitness criteria to include any of the following. Multi-objective optimization could help balance these sometimes conflicting goals.
+* Smoothness of motion (based on velocity/acceleration profiles)
+* Symmetry and balance in limb movement
+* Genre-specific pose quality (e.g., sharpness for hip-hop, fluidity for contemporary dance)
+* Expressive energy matching the music’s intensity
 
 Current beat detection is limited to simple beat-matching. Future work could involve analyzing rhythmic structures (e.g., syncopation, tempo changes) and evolving dancers that react dynamically to these complexities. Beyond simple beat-following, the fitness function can be enhanced to incorporate aesthetic criteria, such as smoothness, symmetry, genre-specific stylistic constraints, and energy levels matching the music. This would encourage the evolution of more varied and visually appealing dances. We plan to introduce genre awareness by defining different sets of dance moves and movement styles for genres such as hip-hop, waltz, or salsa. The evolutionary process could be conditioned on genre-specific templates or move libraries, leading to dances that are not only beat-synchronous but also stylistically appropriate.
+
+While our current approach uses a standard genetic algorithm, other evolutionary methods may unlock richer behavior:
+* Genetic Programming (GP) [8][9] could evolve entire motion control programs, discovering novel patterns of coordination.
+* Evolution Strategies (ES) [11] offer powerful self-adaptive mutation mechanisms that may speed convergence or escape local optima.
+* Hybrid Approaches could combine GAs with local search or reinforcement learning to fine-tune moves post-evolution.
+
+Finally, our approach could scale beyond stick figures to more complex humanoid models or even robotics. If trained with realistic joint constraints and physical limits, the evolved dances could be transferred to simulated or real robotic dancers. Alternatively, this framework could be adapted for crowd choreography, game character animation, or interactive visualizations where rhythmic motion enhances user experience.
 
 # **Bibliography**
 
